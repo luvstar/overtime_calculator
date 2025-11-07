@@ -72,7 +72,7 @@ def calculate_work_hours(json_data_list, text_widget):
         weekly_summary = df.groupby('주차')['실근무시간'].sum().reset_index()
         weekly_summary.columns = ['주차', '주간총무']
         forty_hours = pd.Timedelta(hours=40)
-        weekly_summary['주간초과'] = weekly_summary['주간총무'] - forty_hours
+        weekly_summary['주간초과'] = forty_hours - weekly_summary['주간총무']
         weekly_summary['주간초과'] = weekly_summary['주간초과'].apply(lambda x: max(x, pd.Timedelta(0)))
         result_text = "=== 📅 일별 초과근무 ===\n"
         if dropped_rows > 0:
@@ -86,13 +86,14 @@ def calculate_work_hours(json_data_list, text_widget):
             seconds = int(total_seconds % 60)
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
         df['일일초과_str'] = df['일일초과'].apply(format_timedelta_simple)
+        df['실근무시간_str'] = df['실근무시간'].apply(format_timedelta_simple)
         for index, row in df.iterrows():
-            result_text += f"[{row['날짜']}] 일일 초과: {row['일일초과_str']}\n"
+            result_text += f"[{row['날짜']}] 일일 초과: {row['일일초과_str']} 일일 근무 시간 : {row['실근무시간_str']}\n"
         result_text += "\n\n=== 📊 주별 초과근무 ===\n\n"
         weekly_summary['주간총무_str'] = weekly_summary['주간총무'].apply(format_timedelta_simple)
         weekly_summary['주간초과_str'] = weekly_summary['주간초과'].apply(format_timedelta_simple)
         for index, row in weekly_summary.iterrows():
-            result_text += f"[{row['주차']}주차] 총 근무: {row['주간총무_str']} | 주간 초과: {row['주간초과_str']}\n"
+            result_text += f"[{row['주차']}주차] 총 근무: {row['주간총무_str']} | 남은 주간 근무 시간: {row['주간초과_str']}\n"
         return result_text
     except KeyError as e:
         return f"키 오류: {e}\n\n(1)번 사용자 설정의 JSON 키 이름(예: JSON_DATA_LIST_KEY)이\nF12 [Response] 탭의 이름과 일치하는지 확인하세요."
@@ -337,7 +338,7 @@ def on_button_click():
                      daemon=True).start()
 
 window = tk.Tk()
-window.title("초과근무 시간 계산기 (v4.2 - 자동 갱신)")
+window.title("초과근무 시간 계산기 (v0.4.3)")
 window.geometry("600x700")
 window.attributes('-topmost', True)
 window.config(bg=BG_COLOR)
