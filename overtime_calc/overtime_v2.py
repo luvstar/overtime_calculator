@@ -56,6 +56,8 @@ def show_result(text_widget, message):
 
 
 # --- (2) 근무 시간 계산 로직 (주말 미근무 시 미출력 적용) ---
+
+# --- (2) 근무 시간 계산 로직 (출장 시 편측 기록 보정: 09시/18시) ---
 def calculate_work_hours(json_data_list, text_widget):
     def format_timedelta_simple(td):
         if pd.isna(td): return "00:00:00"
@@ -72,10 +74,9 @@ def calculate_work_hours(json_data_list, text_widget):
     text_widget.config(state=tk.NORMAL)
     text_widget.delete('1.0', tk.END)
     
-    # 색상 설정 (다크 모드용)
-    text_widget.tag_config("warning", foreground="#FF6B6B")  # 미달 (빨강)
-    text_widget.tag_config("success", foreground="#51CF66")  # 초과 (초록)
-    text_widget.tag_config("default", foreground="#EAEAEA")  # 기본 (흰색)
+    text_widget.tag_config("warning", foreground="#FF6B6B")
+    text_widget.tag_config("success", foreground="#51CF66")
+    text_widget.tag_config("default", foreground="#EAEAEA")
     
     try:
         if not json_data_list:
@@ -103,12 +104,44 @@ def calculate_work_hours(json_data_list, text_widget):
         # --- 핵심 로직 ---
         def get_actual_work_time(row):
             curr_date = row['날짜']
-            is_weekend = curr_date.weekday() >= 5 # 5:토, 6:일
+            is_weekend = curr_date.weekday() >= 5 
             status_val = str(row.get(STATUS_KEY, ""))
             
-            # [1순위] 특수 상태 (주말이어도 휴가/출장 등 기록 있으면 처리)
+            # [1순위] 특수 상태 (연차, 휴가, 출장 등)
             special_keywords = ["연차", "휴가", "경조", "출장", "반차", "공가"]
             if any(keyword in status_val for keyword in special_keywords):
+                
+                # --- [수정됨] 출장 시 실 근무시간 보정 로직 ---
+                if "출장" in status_val:
+                    has_start = pd.notna(row[START_TIME_KEY])
+                    has_end = pd.notna(row[END_TIME_KEY])
+                    
+                    act_start = None
+                    act_end = None
+                    
+                    # Case 1: 출/퇴근 모두 있음
+                    if has_start and has_end:
+                        act_start = pd.to_datetime(f"{curr_date} {row[START_TIME_KEY]}")
+                        act_end = pd.to_datetime(f"{curr_date} {row[END_TIME_KEY]}")
+                    
+                    # Case 2: 출근만 있음 -> 퇴근 18:00 가정
+                    elif has_start and not has_end:
+                        act_start = pd.to_datetime(f"{curr_date} {row[START_TIME_KEY]}")
+                        act_end = pd.to_datetime(f"{curr_date} 18:00:00")
+                        
+                    # Case 3: 퇴근만 있음 -> 출근 09:00 가정
+                    elif not has_start and has_end:
+                        act_start = pd.to_datetime(f"{curr_date} 09:00:00")
+                        act_end = pd.to_datetime(f"{curr_date} {row[END_TIME_KEY]}")
+                    
+                    # 계산 가능한 시간이 만들어졌다면 확인
+                    if act_start and act_end:
+                        act_duration = (act_end - act_start) - pd.Timedelta(hours=1) # 휴게 차감
+                        # 보정된 실 근무시간이 8시간을 넘으면, 이걸 인정
+                        if act_duration > pd.Timedelta(hours=8):
+                            return act_duration
+
+                # 위 조건(출장 8시간 초과)에 해당하지 않으면 기존 로직(인정 시간) 사용
                 if pd.notna(row['인정출근']) and pd.notna(row['인정퇴근']):
                     start_dt = pd.to_datetime(f"{curr_date} {row['인정출근']}")
                     end_dt = pd.to_datetime(f"{curr_date} {row['인정퇴근']}")
@@ -118,27 +151,26 @@ def calculate_work_hours(json_data_list, text_widget):
                     if "반차" in status_val: return pd.Timedelta(hours=4)
                     return pd.Timedelta(hours=8)
 
-            # [2순위] 실 근무 기록 존재 (주말 특근 포함)
+            # [2순위] 실 근무 기록 존재 (일반 근무)
             if pd.notna(row[START_TIME_KEY]) and pd.notna(row[END_TIME_KEY]):
                 start_dt = pd.to_datetime(f"{row['날짜']} {row[START_TIME_KEY]}")
                 end_dt = pd.to_datetime(f"{row['날짜']} {row[END_TIME_KEY]}")
                 work_time = (end_dt - start_dt) - pd.Timedelta(hours=1)
                 return max(work_time, pd.Timedelta(0))
 
-            # [3순위] 주말이면서 기록이 없는 경우 -> NaT 반환 (목록에서 제거됨)
+            # [3순위] 주말 기록 없음 -> 제외
             if is_weekend: 
                 return pd.NaT
 
-            # [4순위] 평일 공휴일 -> 근무시간 0시간 (목표 차감을 위해 데이터는 유지)
+            # [4순위] 평일 공휴일 -> 0시간 (목표 차감용)
             if curr_date in kr_holidays: 
                 return pd.Timedelta(0)
             
-            # [5순위] 그 외 (기록 없는 평일) -> NaT (결근 등, 목록에서 제거)
+            # [5순위] 그 외 -> 제외
             return pd.NaT
 
         df['실근무시간'] = df.apply(get_actual_work_time, axis=1)
         
-        # NaT인 행(기록 없는 주말/평일)을 데이터프레임에서 완전히 삭제
         df = df.dropna(subset=['실근무시간'])
         
         if df.empty:
@@ -149,7 +181,6 @@ def calculate_work_hours(json_data_list, text_widget):
         df['주차'] = df['날짜_dt'].dt.isocalendar().week
         weekly_groups = df.groupby('주차')
         
-        # --- 일별 출력 ---
         text_widget.insert(tk.END, "=== 📅 일별 근무 현황 (미근무 주말 제외) ===\n", "default")
         
         for _, row in df.iterrows():
@@ -162,19 +193,15 @@ def calculate_work_hours(json_data_list, text_widget):
             line = f"[{row['날짜']}{tag}] 실근무: {format_timedelta_simple(row['실근무시간'])}\n"
             text_widget.insert(tk.END, line, "default")
             
-        # --- 주별 요약 출력 ---
         text_widget.insert(tk.END, "\n=== 📊 주별 요약 (유동적 목표 시간) ===\n", "default")
         
         for week_num, group in weekly_groups:
             total_work = group['실근무시간'].sum()
             
-            # [추가됨] 해당 주차의 시작일과 종료일 계산 (데이터에 존재하는 날짜 기준)
-            # 만약 월~금 데이터만 있다면 월요일 날짜 ~ 금요일 날짜가 표시됨
             start_date_str = group['날짜_dt'].min().strftime("%m.%d")
             end_date_str = group['날짜_dt'].max().strftime("%m.%d")
             date_range_str = f"({start_date_str}~{end_date_str})"
 
-            # 목표 시간 계산
             holiday_count = 0
             for date_val in group['날짜']:
                 if date_val in kr_holidays and date_val.weekday() < 5:
@@ -192,34 +219,8 @@ def calculate_work_hours(json_data_list, text_widget):
                 status_str = f"⚠️ 미달: {format_timedelta_simple(diff)}"
                 tag_name = "warning"
                 
-            # [수정됨] date_range_str 추가
             line = f"[{week_num}주차 {date_range_str} | 목표 {target_str}] 총 근무: {format_timedelta_simple(total_work)} | {status_str}\n"
             text_widget.insert(tk.END, line, tag_name)
-        # text_widget.insert(tk.END, "\n=== 📊 주별 요약 (유동적 목표 시간) ===\n", "default")
-        
-        # for week_num, group in weekly_groups:
-        #     total_work = group['실근무시간'].sum()
-            
-        #     # 목표 시간 계산 (평일 공휴일 개수만큼 차감)
-        #     holiday_count = 0
-        #     for date_val in group['날짜']:
-        #         if date_val in kr_holidays and date_val.weekday() < 5:
-        #             holiday_count += 1
-            
-        #     target_hours = pd.Timedelta(hours=40) - pd.Timedelta(hours=8 * holiday_count)
-        #     target_str = f"{int(target_hours.total_seconds()//3600)}H"
-            
-        #     if total_work >= target_hours:
-        #         diff = total_work - target_hours
-        #         status_str = f"✅ 초과: {format_timedelta_simple(diff)}"
-        #         tag_name = "success"
-        #     else:
-        #         diff = target_hours - total_work
-        #         status_str = f"⚠️ 미달: {format_timedelta_simple(diff)}"
-        #         tag_name = "warning"
-                
-        #     line = f"[{week_num}주차 | 목표 {target_str}] 총 근무: {format_timedelta_simple(total_work)} | {status_str}\n"
-        #     text_widget.insert(tk.END, line, tag_name)
             
         text_widget.see(tk.END)
         text_widget.config(state=tk.DISABLED)
@@ -229,6 +230,154 @@ def calculate_work_hours(json_data_list, text_widget):
         traceback.print_exc()
         text_widget.insert(tk.END, f"계산 중 오류 발생: {e}\n", "warning")
         text_widget.config(state=tk.DISABLED)
+# def calculate_work_hours(json_data_list, text_widget):
+#     def format_timedelta_simple(td):
+#         if pd.isna(td): return "00:00:00"
+#         total_seconds = int(abs(td.total_seconds()))
+#         hours, remainder = divmod(total_seconds, 3600)
+#         minutes, seconds = divmod(remainder, 60)
+#         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    
+#     APP_START_KEY = "appcomeTm"
+#     APP_END_KEY = "appEndTm"
+#     STATUS_KEY = "atNm"
+    
+#     # UI 초기화 및 태그 설정
+#     text_widget.config(state=tk.NORMAL)
+#     text_widget.delete('1.0', tk.END)
+    
+#     # 색상 설정 (다크 모드용)
+#     text_widget.tag_config("warning", foreground="#FF6B6B")  # 미달 (빨강)
+#     text_widget.tag_config("success", foreground="#51CF66")  # 초과 (초록)
+#     text_widget.tag_config("default", foreground="#EAEAEA")  # 기본 (흰색)
+    
+#     try:
+#         if not json_data_list:
+#             text_widget.insert(tk.END, "오류: JSON 데이터 목록이 비어있습니다.\n")
+#             text_widget.config(state=tk.DISABLED)
+#             return
+        
+#         df = pd.DataFrame(json_data_list)
+#         df['날짜_dt'] = pd.to_datetime(df[DATE_KEY])
+#         df['날짜'] = df['날짜_dt'].dt.date
+
+#         unique_years = df['날짜_dt'].dt.year.unique().tolist()
+#         kr_holidays = holidays.KR(years=unique_years)
+
+#         def format_hhmm(hhmm_val):
+#             if pd.isna(hhmm_val) or hhmm_val == '': return None
+#             try: hhmm_str = str(int(float(hhmm_val))).zfill(4) 
+#             except ValueError: hhmm_str = str(hhmm_val)
+#             if len(hhmm_str) < 4: return None
+#             return f"{hhmm_str[:2]}:{hhmm_str[2:]}"
+
+#         df['인정출근'] = df[APP_START_KEY].apply(format_hhmm)
+#         df['인정퇴근'] = df[APP_END_KEY].apply(format_hhmm)
+        
+#         # --- 핵심 로직 ---
+#         def get_actual_work_time(row):
+#             curr_date = row['날짜']
+#             is_weekend = curr_date.weekday() >= 5 # 5:토, 6:일
+#             status_val = str(row.get(STATUS_KEY, ""))
+            
+#             # [1순위] 특수 상태 (주말이어도 휴가/출장 등 기록 있으면 처리)
+#             special_keywords = ["연차", "휴가", "경조", "출장", "반차", "공가"]
+#             if any(keyword in status_val for keyword in special_keywords):
+#                 if pd.notna(row['인정출근']) and pd.notna(row['인정퇴근']):
+#                     start_dt = pd.to_datetime(f"{curr_date} {row['인정출근']}")
+#                     end_dt = pd.to_datetime(f"{curr_date} {row['인정퇴근']}")
+#                     work_time = (end_dt - start_dt) - pd.Timedelta(hours=1)
+#                     return max(work_time, pd.Timedelta(0))
+#                 else:
+#                     if "반차" in status_val: return pd.Timedelta(hours=4)
+#                     return pd.Timedelta(hours=8)
+
+#             # [2순위] 실 근무 기록 존재 (주말 특근 포함)
+#             if pd.notna(row[START_TIME_KEY]) and pd.notna(row[END_TIME_KEY]):
+#                 start_dt = pd.to_datetime(f"{row['날짜']} {row[START_TIME_KEY]}")
+#                 end_dt = pd.to_datetime(f"{row['날짜']} {row[END_TIME_KEY]}")
+#                 work_time = (end_dt - start_dt) - pd.Timedelta(hours=1)
+#                 return max(work_time, pd.Timedelta(0))
+
+#             # [3순위] 주말이면서 기록이 없는 경우 -> NaT 반환 (목록에서 제거됨)
+#             if is_weekend: 
+#                 return pd.NaT
+
+#             # [4순위] 평일 공휴일 -> 근무시간 0시간 (목표 차감을 위해 데이터는 유지)
+#             if curr_date in kr_holidays: 
+#                 return pd.Timedelta(0)
+            
+#             # [5순위] 그 외 (기록 없는 평일) -> NaT (결근 등, 목록에서 제거)
+#             return pd.NaT
+
+#         df['실근무시간'] = df.apply(get_actual_work_time, axis=1)
+        
+#         # NaT인 행(기록 없는 주말/평일)을 데이터프레임에서 완전히 삭제
+#         df = df.dropna(subset=['실근무시간'])
+        
+#         if df.empty:
+#             text_widget.insert(tk.END, "표시할 근무 데이터가 없습니다.\n", "default")
+#             text_widget.config(state=tk.DISABLED)
+#             return
+        
+#         df['주차'] = df['날짜_dt'].dt.isocalendar().week
+#         weekly_groups = df.groupby('주차')
+        
+#         # --- 일별 출력 ---
+#         text_widget.insert(tk.END, "=== 📅 일별 근무 현황 (미근무 주말 제외) ===\n", "default")
+        
+#         for _, row in df.iterrows():
+#             status_val = str(row.get(STATUS_KEY, ""))
+#             tag = ""
+#             holiday_name = kr_holidays.get(row['날짜'])
+#             #if holiday_name: tag = f" [공휴일:{holiday_name}]"
+#             if any(k in status_val for k in ["연차", "반차", "출장", "휴가"]): tag = f" [{status_val}]"
+            
+#             line = f"[{row['날짜']}{tag}] 실근무: {format_timedelta_simple(row['실근무시간'])}\n"
+#             text_widget.insert(tk.END, line, "default")
+            
+#         # --- 주별 요약 출력 ---
+#         text_widget.insert(tk.END, "\n=== 📊 주별 요약 (유동적 목표 시간) ===\n", "default")
+        
+#         for week_num, group in weekly_groups:
+#             total_work = group['실근무시간'].sum()
+            
+#             # [추가됨] 해당 주차의 시작일과 종료일 계산 (데이터에 존재하는 날짜 기준)
+#             # 만약 월~금 데이터만 있다면 월요일 날짜 ~ 금요일 날짜가 표시됨
+#             start_date_str = group['날짜_dt'].min().strftime("%m.%d")
+#             end_date_str = group['날짜_dt'].max().strftime("%m.%d")
+#             date_range_str = f"({start_date_str}~{end_date_str})"
+
+#             # 목표 시간 계산
+#             holiday_count = 0
+#             for date_val in group['날짜']:
+#                 if date_val in kr_holidays and date_val.weekday() < 5:
+#                     holiday_count += 1
+            
+#             target_hours = pd.Timedelta(hours=40) - pd.Timedelta(hours=8 * holiday_count)
+#             target_str = f"{int(target_hours.total_seconds()//3600)}H"
+            
+#             if total_work >= target_hours:
+#                 diff = total_work - target_hours
+#                 status_str = f"✅ 초과: {format_timedelta_simple(diff)}"
+#                 tag_name = "success"
+#             else:
+#                 diff = target_hours - total_work
+#                 status_str = f"⚠️ 미달: {format_timedelta_simple(diff)}"
+#                 tag_name = "warning"
+                
+#             # [수정됨] date_range_str 추가
+#             line = f"[{week_num}주차 {date_range_str} | 목표 {target_str}] 총 근무: {format_timedelta_simple(total_work)} | {status_str}\n"
+#             text_widget.insert(tk.END, line, tag_name)
+            
+#         text_widget.see(tk.END)
+#         text_widget.config(state=tk.DISABLED)
+
+#     except Exception as e:
+#         import traceback
+#         traceback.print_exc()
+#         text_widget.insert(tk.END, f"계산 중 오류 발생: {e}\n", "warning")
+#         text_widget.config(state=tk.DISABLED)
 
 # # --- (2) 근무 시간 계산 로직 (색상 적용 버전) ---
 # def calculate_work_hours(json_data_list, text_widget):
@@ -577,7 +726,7 @@ def on_button_click(event=None):
                      daemon=True).start()
 
 window = tk.Tk()
-window.title("초과근무 시간 계산기 (v0.4.4)")
+window.title("초과근무 시간 계산기 (v2.0)")
 window.geometry("600x720")
 window.attributes('-topmost', True)
 window.config(bg=BG_COLOR)
