@@ -374,6 +374,7 @@ def run_automation_and_calculate(user_id, user_pw, start_date, end_date, result_
 
         # 9. 최종 결과 표시
         update_status(98, f"계산완료. 결과 출력 중...")
+        time.sleep(0.5)
         log_to_ui(result_text_area, "\n" + result)
         update_status(100, f"작업 완료")
 
