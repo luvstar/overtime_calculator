@@ -1,7 +1,9 @@
 import tkinter as tk
 from tkinter import scrolledtext, messagebox
+from tkinter import ttk
 import pandas as pd
 import time
+import holidays
 from seleniumwire import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
@@ -35,12 +37,100 @@ def log_to_ui(text_widget, message):
     text_widget.config(state=tk.DISABLED, bg=log_bg_color, fg=text_color)
     window.update_idletasks() 
 
+# --- UI 상태 업데이트 함수 (프로그레스바 & 라벨) ---
+def update_status(progress_val, message_text):
+    """
+    메인 스레드에서 UI를 업데이트하기 위해 사용
+    """
+    try:
+        progress_bar['value'] = progress_val
+        status_label.config(text=message_text)
+        window.update_idletasks()
+    except Exception:
+        pass # 창이 닫혔을 때 오류 방지
+
+# --- 결과 텍스트 출력 함수 ---
+def show_result(text_widget, message):
+    text_widget.config(state=tk.NORMAL)
+    text_widget.delete('1.0', tk.END) # 기존 내용 삭제
+    text_widget.insert(tk.END, message + "\n")
+    text_widget.see(tk.END) 
+    text_widget.config(state=tk.DISABLED)
+
 # --- (2) 핵심 로직: 근무 시간 계산 ---
+# def calculate_work_hours(json_data_list, text_widget):
+#     try:
+#         if not json_data_list:
+#             return "오류: JSON 데이터 목록이 비어있습니다."
+#         df = pd.DataFrame(json_data_list)
+#         def format_hhmm(hhmm_val):
+#             if pd.isna(hhmm_val) or hhmm_val == '':
+#                 return None
+#             try:
+#                 hhmm_str = str(int(float(hhmm_val))).zfill(4) 
+#             except ValueError:
+#                 hhmm_str = str(hhmm_val)
+#             if len(hhmm_str) < 4:
+#                 return None
+#             return f"{hhmm_str[:2]}:{hhmm_str[2:]}"
+#         df[START_TIME_KEY] = df[START_TIME_KEY].apply(format_hhmm)
+#         df[END_TIME_KEY] = df[END_TIME_KEY].apply(format_hhmm)
+#         df['날짜'] = pd.to_datetime(df[DATE_KEY]).dt.date
+#         df['출근시간'] = pd.to_datetime(df['날짜'].astype(str) + ' ' + df[START_TIME_KEY], errors='coerce')
+#         df['퇴근시간'] = pd.to_datetime(df['날짜'].astype(str) + ' ' + df[END_TIME_KEY], errors='coerce')
+#         original_rows = len(df)
+#         df = df.dropna(subset=['출근시간', '퇴근시간'])
+#         dropped_rows = original_rows - len(df)
+#         if dropped_rows > 0:
+#             log_to_ui(text_widget, f"알림: 출근/퇴근 시간이 없는 {dropped_rows}개의 행을 계산에서 제외했습니다.")
+#         if df.empty:
+#             return "계산할 수 있는 유효한 출퇴근 기록이 없습니다."
+#         df['실근무시간'] = (df['퇴근시간'] - df['출근시간']) - pd.Timedelta(hours=1)
+#         eight_hours = pd.Timedelta(hours=8)
+#         df['일일초과'] = df['실근무시간'] - eight_hours
+#         df['일일초과'] = df['일일초과'].apply(lambda x: max(x, pd.Timedelta(0)))
+#         df['날짜_dt'] = pd.to_datetime(df['날짜'])
+#         df['주차'] = df['날짜_dt'].dt.isocalendar().week
+#         weekly_summary = df.groupby('주차')['실근무시간'].sum().reset_index()
+#         weekly_summary.columns = ['주차', '주간총무']
+#         forty_hours = pd.Timedelta(hours=40)
+#         weekly_summary['주간초과'] = forty_hours - weekly_summary['주간총무']
+#         weekly_summary['주간초과'] = weekly_summary['주간초과'].apply(lambda x: max(x, pd.Timedelta(0)))
+#         result_text = "=== 📅 일별 초과근무 ===\n"
+#         if dropped_rows > 0:
+#             result_text += f"(참고: 유효하지 않은 {dropped_rows}개 행 제외)\n\n"
+#         def format_timedelta_simple(td):
+#             if pd.isna(td):
+#                 return "00:00:00"
+#             total_seconds = td.total_seconds()
+#             hours = int(total_seconds // 3600)
+#             minutes = int((total_seconds % 3600) // 60)
+#             seconds = int(total_seconds % 60)
+#             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+#         df['일일초과_str'] = df['일일초과'].apply(format_timedelta_simple)
+#         df['실근무시간_str'] = df['실근무시간'].apply(format_timedelta_simple)
+#         for index, row in df.iterrows():
+#             result_text += f"[{row['날짜']}] 일일 초과: {row['일일초과_str']} 일일 근무 시간 : {row['실근무시간_str']}\n"
+#         result_text += "\n\n=== 📊 주별 초과근무 ===\n\n"
+#         weekly_summary['주간총무_str'] = weekly_summary['주간총무'].apply(format_timedelta_simple)
+#         weekly_summary['주간초과_str'] = weekly_summary['주간초과'].apply(format_timedelta_simple)
+#         for index, row in weekly_summary.iterrows():
+#             result_text += f"[{row['주차']}주차] 총 근무: {row['주간총무_str']} | 남은 주간 근무 시간: {row['주간초과_str']}\n"
+#         return result_text
+#     except KeyError as e:
+#         return f"키 오류: {e}\n\n(1)번 사용자 설정의 JSON 키 이름(예: JSON_DATA_LIST_KEY)이\nF12 [Response] 탭의 이름과 일치하는지 확인하세요."
+#     except Exception as e:
+#         return f"계산 중 알 수 없는 오류 발생: {e}"
 def calculate_work_hours(json_data_list, text_widget):
     try:
         if not json_data_list:
             return "오류: JSON 데이터 목록이 비어있습니다."
+        
+        # 한국 공휴일 정보 로드
+        kr_holidays = holidays.KR()
+        
         df = pd.DataFrame(json_data_list)
+        
         def format_hhmm(hhmm_val):
             if pd.isna(hhmm_val) or hhmm_val == '':
                 return None
@@ -51,54 +141,79 @@ def calculate_work_hours(json_data_list, text_widget):
             if len(hhmm_str) < 4:
                 return None
             return f"{hhmm_str[:2]}:{hhmm_str[2:]}"
+
         df[START_TIME_KEY] = df[START_TIME_KEY].apply(format_hhmm)
         df[END_TIME_KEY] = df[END_TIME_KEY].apply(format_hhmm)
         df['날짜'] = pd.to_datetime(df[DATE_KEY]).dt.date
-        df['출근시간'] = pd.to_datetime(df['날짜'].astype(str) + ' ' + df[START_TIME_KEY], errors='coerce')
-        df['퇴근시간'] = pd.to_datetime(df['날짜'].astype(str) + ' ' + df[END_TIME_KEY], errors='coerce')
+        
+        # --- 수정된 로직 시작: 실근무시간 계산 ---
+        def get_actual_work_time(row):
+            # 1. 공휴일인지 확인 (주말 제외 평일 공휴일)
+            # holidays 라이브러리는 datetime.date 객체를 인자로 받습니다.
+            if row['날짜'] in kr_holidays:
+                # 공휴일이면 8시간(480분) 인정
+                return pd.Timedelta(hours=8)
+            
+            # 2. 공휴일이 아닌 경우 기존 로직 수행
+            if pd.isna(row[START_TIME_KEY]) or pd.isna(row[END_TIME_KEY]):
+                return pd.NaT # 출퇴근 기록 없으면 제외 대상
+            
+            start_dt = pd.to_datetime(f"{row['날짜']} {row[START_TIME_KEY]}")
+            end_dt = pd.to_datetime(f"{row['날짜']} {row[END_TIME_KEY]}")
+            
+            # (퇴근 - 출근) - 휴게시간 1시간
+            return (end_dt - start_dt) - pd.Timedelta(hours=1)
+
+        # 행별로 실근무시간 계산 적용
+        df['실근무시간'] = df.apply(get_actual_work_time, axis=1)
+        
         original_rows = len(df)
-        df = df.dropna(subset=['출근시간', '퇴근시간'])
+        df = df.dropna(subset=['실근무시간'])
         dropped_rows = original_rows - len(df)
+        
         if dropped_rows > 0:
-            log_to_ui(text_widget, f"알림: 출근/퇴근 시간이 없는 {dropped_rows}개의 행을 계산에서 제외했습니다.")
+            log_to_ui(text_widget, f"알림: 기록이 없는 {dropped_rows}개의 행을 제외했습니다.")
+        
         if df.empty:
-            return "계산할 수 있는 유효한 출퇴근 기록이 없습니다."
-        df['실근무시간'] = (df['퇴근시간'] - df['출근시간']) - pd.Timedelta(hours=1)
+            return "계산할 수 있는 유효한 데이터가 없습니다."
+        
+        # --- 초과 근무 및 주간 합계 계산 ---
         eight_hours = pd.Timedelta(hours=8)
-        df['일일초과'] = df['실근무시간'] - eight_hours
-        df['일일초과'] = df['일일초과'].apply(lambda x: max(x, pd.Timedelta(0)))
+        # 일일 초과는 실근무가 8시간을 넘었을 때만 계산
+        df['일일초과'] = df['실근무시간'].apply(lambda x: max(x - eight_hours, pd.Timedelta(0)))
+        
         df['날짜_dt'] = pd.to_datetime(df['날짜'])
         df['주차'] = df['날짜_dt'].dt.isocalendar().week
+        
         weekly_summary = df.groupby('주차')['실근무시간'].sum().reset_index()
         weekly_summary.columns = ['주차', '주간총무']
+        
         forty_hours = pd.Timedelta(hours=40)
-        weekly_summary['주간초과'] = forty_hours - weekly_summary['주간총무']
-        weekly_summary['주간초과'] = weekly_summary['주간초과'].apply(lambda x: max(x, pd.Timedelta(0)))
-        result_text = "=== 📅 일별 초과근무 ===\n"
-        if dropped_rows > 0:
-            result_text += f"(참고: 유효하지 않은 {dropped_rows}개 행 제외)\n\n"
+        # 주간 초과는 40시간에서 현재 근무시간을 뺀 '남은 시간' 개념
+        weekly_summary['주간초과'] = weekly_summary['주간총무'].apply(lambda x: max(forty_hours - x, pd.Timedelta(0)))
+        
+        # --- 결과 텍스트 생성 ---
+        result_text = "=== 📅 일별 근무 현황 (공휴일 8H 인정) ===\n"
+        
         def format_timedelta_simple(td):
-            if pd.isna(td):
-                return "00:00:00"
-            total_seconds = td.total_seconds()
-            hours = int(total_seconds // 3600)
-            minutes = int((total_seconds % 3600) // 60)
-            seconds = int(total_seconds % 60)
+            if pd.isna(td): return "00:00:00"
+            total_seconds = int(td.total_seconds())
+            hours, remainder = divmod(total_seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        df['일일초과_str'] = df['일일초과'].apply(format_timedelta_simple)
-        df['실근무시간_str'] = df['실근무시간'].apply(format_timedelta_simple)
-        for index, row in df.iterrows():
-            result_text += f"[{row['날짜']}] 일일 초과: {row['일일초과_str']} 일일 근무 시간 : {row['실근무시간_str']}\n"
-        result_text += "\n\n=== 📊 주별 초과근무 ===\n\n"
-        weekly_summary['주간총무_str'] = weekly_summary['주간총무'].apply(format_timedelta_simple)
-        weekly_summary['주간초과_str'] = weekly_summary['주간초과'].apply(format_timedelta_simple)
-        for index, row in weekly_summary.iterrows():
-            result_text += f"[{row['주차']}주차] 총 근무: {row['주간총무_str']} | 남은 주간 근무 시간: {row['주간초과_str']}\n"
+
+        for _, row in df.iterrows():
+            holiday_mark = " [공휴일]" if row['날짜'] in kr_holidays else ""
+            result_text += f"[{row['날짜']}{holiday_mark}] 실근무: {format_timedelta_simple(row['실근무시간'])} | 초과: {format_timedelta_simple(row['일일초과'])}\n"
+            
+        result_text += "\n=== 📊 주별 요약 (목표 40시간) ===\n"
+        for _, row in weekly_summary.iterrows():
+            result_text += f"[{row['주차']}주차] 주간 총합: {format_timedelta_simple(row['주간총무'])} | 40시간까지 남은 시간: {format_timedelta_simple(row['주간초과'])}\n"
+            
         return result_text
-    except KeyError as e:
-        return f"키 오류: {e}\n\n(1)번 사용자 설정의 JSON 키 이름(예: JSON_DATA_LIST_KEY)이\nF12 [Response] 탭의 이름과 일치하는지 확인하세요."
+
     except Exception as e:
-        return f"계산 중 알 수 없는 오류 발생: {e}"
+        return f"계산 중 오류 발생: {e}"
 
 # --- (3) Selenium 자동화 로직 ---
 def run_automation_and_calculate(user_id, user_pw, start_date, end_date, result_text_area):
@@ -107,7 +222,9 @@ def run_automation_and_calculate(user_id, user_pw, start_date, end_date, result_
         result_text_area.config(state=tk.NORMAL)
         result_text_area.delete('1.0', tk.END) 
         result_text_area.config(state=tk.DISABLED)
-        log_to_ui(result_text_area, "자동 로그인을 시작합니다...\n웹 브라우저를 백그라운드에서 실행합니다.") 
+        #log_to_ui(result_text_area, "자동 로그인을 시작합니다...\n웹 브라우저를 백그라운드에서 실행합니다.") 
+        show_result(result_text_area, "") # 결과창 비우기
+        update_status(5, "브라우저 실행 중...")
 
         # 헤드리스 모드(백그라운드 실행) 옵션 설정
         chrome_options = Options()
@@ -119,43 +236,52 @@ def run_automation_and_calculate(user_id, user_pw, start_date, end_date, result_
         # 옵션을 적용하여 드라이버 실행
         driver = webdriver.Chrome(service=service, options=chrome_options) 
 
+        update_status(15, "로그인 페이지 접속 중...")
         driver.get(LOGIN_URL)
         time.sleep(3) 
-        log_to_ui(result_text_area, f"페이지 이동 시도: {LOGIN_URL}")
+        #log_to_ui(result_text_area, f"페이지 이동 시도: {LOGIN_URL}")
+        
         
         # 3. 자동 로그인
         try:
             wait = WebDriverWait(driver, 10)
-            log_to_ui(result_text_area, "ID 입력창을 기다립니다...")
+            #log_to_ui(result_text_area, "ID 입력창을 기다립니다...")
+            update_status(15, "로그인 페이지 접속 중...")
             id_input = wait.until(EC.presence_of_element_located((By.ID, "reqLoginId")))
-            log_to_ui(result_text_area, "ID 입력창 찾음. ID 입력...")
+            #log_to_ui(result_text_area, "ID 입력창 찾음. ID 입력...")
+            update_status(25, "아이디 입력 중...")
             id_input.send_keys(user_id)
-            log_to_ui(result_text_area, "'다음' 버튼을 기다립니다...")
+            #log_to_ui(result_text_area, "'다음' 버튼을 기다립니다...")
             next_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., '다음')]")))
-            log_to_ui(result_text_area, "'다음' 버튼 클릭.")
+            #log_to_ui(result_text_area, "'다음' 버튼 클릭.")
             next_button.click()
-            log_to_ui(result_text_area, "비밀번호 입력창을 기다립니다...")
+            update_status(35, "비밀번호 입력 중...")
+            #log_to_ui(result_text_area, "비밀번호 입력창을 기다립니다...")
             pw_input = wait.until(EC.element_to_be_clickable((By.ID, "reqLoginPw")))
-            log_to_ui(result_text_area, "비밀번호 입력...")
+            #log_to_ui(result_text_area, "비밀번호 입력...")
             pw_input.send_keys(user_pw)
-            log_to_ui(result_text_area, "로그인 버튼을 기다립니다...")
+            #log_to_ui(result_text_area, "로그인 버튼을 기다립니다...")
             login_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., '로그인')]")))
-            log_to_ui(result_text_area, "로그인 버튼 클릭.")
+            #log_to_ui(result_text_area, "로그인 버튼 클릭.")
+            update_status(45, "로그인 시도 중...")
             login_button.click()
         except Exception as e:
-            log_to_ui(result_text_area, f"오류 발생! 현재 URL: {driver.current_url}")
+            #log_to_ui(result_text_area, f"오류 발생! 현재 URL: {driver.current_url}")
+            update_status(0, "로그인 실패")
             driver.quit()
             messagebox.showerror("로그인 실패", f"로그인 요소를 찾을 수 없습니다.\n오류: {e}")
             return
 
-        log_to_ui(result_text_area, "\n로그인 성공. 데이터 페이지로 이동합니다...")
+        #log_to_ui(result_text_area, "\n로그인 성공. 데이터 페이지로 이동합니다...")
+        update_status(55, "로그인 성공. 데이터 페이지로 이동 중...")
 
         # --- 4. 데이터 페이지 이동 및 날짜 설정 ---
         try:
             wait = WebDriverWait(driver, 10) 
-            log_to_ui(result_text_area, "'근무시간현황' 메뉴/버튼을 찾습니다...")
+            #log_to_ui(result_text_area, "'근무시간현황' 메뉴/버튼을 찾습니다...")
             commute_menu = wait.until(EC.element_to_be_clickable((By.XPATH, "//li[@data-name='근무시간현황']")))
-            log_to_ui(result_text_area, "'근무시간현황' 메뉴 클릭.")
+            #log_to_ui(result_text_area, "'근무시간현황' 메뉴 클릭.")
+            update_status(60, "근무 현황 페이지 이동 중...")
             commute_menu.click()
 
             # 날짜 입력창이 나타날 때까지 대기 (CSS 선택자 기준)
@@ -169,7 +295,8 @@ def run_automation_and_calculate(user_id, user_pw, start_date, end_date, result_
             end_date_picker = date_pickers[1]
 
             # 키보드 조합(Ctrl+A, Backspace)으로 날짜를 강제 삭제하고 입력
-            log_to_ui(result_text_area, f"시작일자 {start_date} 입력 중...")
+            #log_to_ui(result_text_area, f"시작일자 {start_date} 입력 중...")
+            update_status(65, f"날짜 입력 중 ({start_date} ~ {end_date})...")
             start_date_picker.click()
             time.sleep(0.3)
             start_date_picker.send_keys(Keys.CONTROL + "a")
@@ -178,7 +305,8 @@ def run_automation_and_calculate(user_id, user_pw, start_date, end_date, result_
             time.sleep(0.3)
             start_date_picker.send_keys(start_date)
             time.sleep(0.3)
-            log_to_ui(result_text_area, f"종료일자 {end_date} 입력 중...")
+            #log_to_ui(result_text_area, f"종료일자 {end_date} 입력 중...")
+            update_status(75, f"날짜 입력 중 ({start_date} ~ {end_date})...")
             end_date_picker.click()
             time.sleep(0.3)
             end_date_picker.send_keys(Keys.CONTROL + "a")
@@ -187,15 +315,18 @@ def run_automation_and_calculate(user_id, user_pw, start_date, end_date, result_
             time.sleep(0.3)
             end_date_picker.send_keys(end_date)
             
-            log_to_ui(result_text_area, "기존 네트워크 기록을 삭제합니다...")
+            #log_to_ui(result_text_area, "기존 네트워크 기록을 삭제합니다...")
+            update_status(77, "기존 네트워크 기록을 삭제 중...")
             del driver.requests
             time.sleep(1)
             # Enter 키 입력으로 날짜 갱신
-            log_to_ui(result_text_area, "Enter 키를 눌러 날짜를 적용(자동 갱신)합니다...")
+            #log_to_ui(result_text_area, "Enter 키를 눌러 날짜를 적용(자동 갱신)합니다...")
+            update_status(80, "네트워크 기록 갱신 중...")
             end_date_picker.send_keys(Keys.ENTER)
             # -----------------------------------------------------------------
 
         except Exception as e:
+            update_status(0, "오류 발생! 날짜 설정 또는 자동 갱신에 실패했습니다.")
             log_to_ui(result_text_area, f"오류 발생! 날짜 설정 또는 자동 갱신에 실패했습니다.")
             driver.quit()
             messagebox.showerror("페이지 이동/조회 실패", f"날짜 입력 또는 자동 갱신(Enter)에 실패했습니다.\n오류: {e}")
@@ -205,20 +336,24 @@ def run_automation_and_calculate(user_id, user_pw, start_date, end_date, result_
         
         # 5. 'selectTab2' 네트워크 요청 가로채기
         try:
-            log_to_ui(result_text_area, f"'{INTERCEPT_URL_KEYWORD}' 요청 가로채기를 시작합니다 (최대 30초 대기)...")
+            update_status(82, "네트워크 패킷 데이터 수신 중...")
+            #log_to_ui(result_text_area, f"'{INTERCEPT_URL_KEYWORD}' 요청 가로채기를 시작합니다 (최대 30초 대기)...")
             request = driver.wait_for_request(INTERCEPT_URL_KEYWORD, timeout=30)
-            log_to_ui(result_text_area, "... 'selectTab2' 요청 가로채기 성공!")
+            #log_to_ui(result_text_area, "... 'selectTab2' 요청 가로채기 성공!")
+            update_status(85, "네트워크 패킷 데이터 수신 성공")
             response = request.response
             if not response:
                 raise Exception("서버에서 응답을 받지 못했습니다.")
             response_body_bytes = response.body
             encoding = response.headers.get('Content-Encoding', '')
             if 'gzip' in encoding:
-                log_to_ui(result_text_area, "Gzip 압축 감지. 압축을 해제합니다...")
+                #log_to_ui(result_text_area, "Gzip 압축 감지. 압축을 해제합니다...")
+                update_status(88, "네트워크 패킷 데이터 압축 해제 진행 중...")
                 decompressed_body = gzip.decompress(response_body_bytes)
                 response_text = decompressed_body.decode('utf-8')
             else:
-                log_to_ui(result_text_area, "압축 없음. UTF-8로 디코딩합니다...")
+                #log_to_ui(result_text_area, "압축 없음. UTF-8로 디코딩합니다...")
+                update_status(88, "네트워크 패킷 데이터 UTF-8 디코딩 진행 중...")
                 response_text = response_body_bytes.decode('utf-8')
             if not response_text:
                 raise Exception("데이터를 디코딩했으나, 텍스트가 비어있습니다.")
@@ -231,13 +366,16 @@ def run_automation_and_calculate(user_id, user_pw, start_date, end_date, result_
             return
         
         driver.quit() 
-        log_to_ui(result_text_area, f"\n데이터 수신 성공! {len(data_list)}개의 기록을 바탕으로 계산을 시작합니다...")
+        #log_to_ui(result_text_area, f"\n데이터 수신 성공! {len(data_list)}개의 기록을 바탕으로 계산을 시작합니다...")
+        update_status(95, f"\n데이터 수신 성공! {len(data_list)}개의 기록 기반 근무시간 계산 중...")
 
         # 8. 계산 함수 호출
         result = calculate_work_hours(data_list, result_text_area)
 
         # 9. 최종 결과 표시
+        update_status(98, f"계산완료. 결과 출력 중...")
         log_to_ui(result_text_area, "\n" + result)
+        update_status(100, f"작업 완료")
 
     except Exception as e:
         try:
@@ -257,9 +395,11 @@ BUTTON_TEXT_COLOR = "#FFFFFF"
 BUTTON_ACTIVE_COLOR = "#005C99"
 ENTRY_BG_COLOR = "#3C3C3C"
 ENTRY_TEXT_COLOR = "#EAEAEA"
+STATUS_TEXT_COLOR = "#AAAAAA" # 상태 텍스트 색상
 
 APP_FONT = ("Malgun Gothic", 12, "bold")
 BUTTON_FONT = ("Malgun Gothic", 12, "bold")
+STATUS_FONT = ("Malgun Gothic", 10)
 
 # ID/PW 저장을 위한 파일 이름 정의
 def get_script_directory():
@@ -308,7 +448,7 @@ def load_credentials():
         return "", ""
     
 # 버튼 클릭 시 ID/PW 저장 로직 
-def on_button_click():
+def on_button_click(event=None):
     # 1. UI에서 ID/PW/날짜 가져오기
     user_id = id_entry.get()
     user_pw = pw_entry.get()
@@ -339,9 +479,12 @@ def on_button_click():
 
 window = tk.Tk()
 window.title("초과근무 시간 계산기 (v0.4.3)")
-window.geometry("600x700")
+window.geometry("600x720")
 window.attributes('-topmost', True)
 window.config(bg=BG_COLOR)
+
+# (중요) 엔터 키 바인딩 추가
+window.bind('<Return>', on_button_click)
 
 # UI 생성 전, 저장된 ID/PW 불러오기
 loaded_id, loaded_pw = load_credentials()
@@ -386,8 +529,17 @@ end_date_entry.insert(0, today_str)
 end_date_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
 # 시작 버튼
-process_button = tk.Button(window, text="자동 계산 시작하기", font=BUTTON_FONT, command=on_button_click, bg=BUTTON_COLOR, fg=BUTTON_TEXT_COLOR, activebackground=BUTTON_ACTIVE_COLOR, activeforeground=BUTTON_TEXT_COLOR, relief=tk.FLAT, borderwidth=0, padx=20)
+process_button = tk.Button(window, text="자동 계산 시작하기(ENTER)", font=BUTTON_FONT, command=on_button_click, bg=BUTTON_COLOR, fg=BUTTON_TEXT_COLOR, activebackground=BUTTON_ACTIVE_COLOR, activeforeground=BUTTON_TEXT_COLOR, relief=tk.FLAT, borderwidth=0, padx=20)
 process_button.pack(pady=10, padx=20, fill=tk.X, ipady=8)
+
+# --- 프로그레스바 및 상태 라벨 ---
+status_label = tk.Label(window, text="대기 중...", font=STATUS_FONT, bg=BG_COLOR, fg=STATUS_TEXT_COLOR)
+status_label.pack(pady=(10, 5), padx=20, anchor='w')
+style = ttk.Style()
+style.theme_use('default')
+style.configure("TProgressbar", thickness=15, troughcolor=ENTRY_BG_COLOR, background=BUTTON_COLOR)
+progress_bar = ttk.Progressbar(window, style="TProgressbar", orient="horizontal", length=100, mode="determinate")
+progress_bar.pack(pady=(0, 15), padx=20, fill=tk.X)
 
 # 로그 표시 영역
 result_text_area = scrolledtext.ScrolledText(window, wrap=tk.WORD, font=APP_FONT, bg=LOG_BG_COLOR, fg=TEXT_COLOR, relief=tk.FLAT, borderwidth=0, insertbackground=TEXT_COLOR, state=tk.DISABLED)

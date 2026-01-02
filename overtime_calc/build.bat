@@ -1,29 +1,32 @@
 @echo off
 echo =======================================================
-echo == Overtime App Builder v3.0 (with CRT + KEY Fix)
+echo == Overtime App Builder v4.0 (holidays included)
 echo == Python libraries will be installed first.
 echo =======================================================
 echo.
 
-echo [1/7] Installing pandas...
+echo [1/8] Installing pandas...
 pip install pandas
 
-echo [2/7] Installing selenium...
+echo [2/8] Installing selenium...
 pip install selenium
 
-echo [3/7] Installing selenium-wire...
+echo [3/8] Installing selenium-wire...
 pip install selenium-wire
 
-echo [4/7] Installing webdriver-manager...
+echo [4/8] Installing webdriver-manager...
 pip install webdriver-manager
 
-echo [5/7] Installing pyinstaller (for .exe)...
+echo [5/8] Installing holidays (For Public Holiday Logic)...
+pip install holidays
+
+echo [6/8] Installing pyinstaller (for .exe)...
 pip install pyinstaller
 
-echo [6/7] Installing blinker (for compatibility)...
+echo [7/8] Installing blinker (for compatibility)...
 pip install blinker==1.7.0
 
-echo [7/7] All libraries installed successfully.
+echo [8/8] All libraries installed successfully.
 echo.
 
 rem =======================================================
@@ -48,8 +51,16 @@ echo == Adding selenium-wire certificates (crt + key)...
 echo =======================================================
 echo.
 
-:: (!!!) --add-data 플래그를 두 번 사용하여 crt와 key 파일을 모두 포함
+:: (!!!) 파이썬 스크립트 파일명이 이전 버전(overtime_v2.py) 기준입니다. 
+:: 만약 파일명을 바꾸셨다면 아래 'overtime_v2.py' 부분을 실제 파일명으로 수정하세요.
+
+rem python -m PyInstaller --onefile --windowed ^
+rem --add-data "%SELENIUMWIRE_PATH%\ca.crt;seleniumwire" ^
+rem --add-data "%SELENIUMWIRE_PATH%\ca.key;seleniumwire" ^
+rem overtime_v2.py
+
 python -m PyInstaller --onefile --windowed ^
+ --collect-submodules holidays ^
  --add-data "%SELENIUMWIRE_PATH%\ca.crt;seleniumwire" ^
  --add-data "%SELENIUMWIRE_PATH%\ca.key;seleniumwire" ^
  overtime_v2.py
